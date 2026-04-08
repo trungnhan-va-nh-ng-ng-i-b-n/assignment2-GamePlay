@@ -244,21 +244,21 @@ def _move_priority(board, move):
     return score
 
 
-def _order_moves(board, player_to_move, valid_moves, root_player, move_cache):
+def _order_moves(board, player_to_move, valid_moves, move_cache):
     scored = []
     for move in valid_moves:
         next_board = make_move(board, move[0], move[1], player_to_move)
         quick_priority = _move_priority(board, move)
-        h = heuristic(next_board, root_player, move_cache)
+        h = heuristic(next_board, player_to_move, move_cache)
         scored.append((quick_priority * 1000 + h, move))
     scored.sort(key=lambda x: x[0], reverse=True)
     return [move for _, move in scored]
 
 
-def _negamax(board, player_to_move, root_player, depth, alpha, beta, stats, deadline, move_cache):
+def _negamax(board, player_to_move, depth, alpha, beta, stats, deadline, move_cache):
     if time.perf_counter() >= deadline:
         stats["timed_out"] = True
-        return heuristic(board, root_player, move_cache)
+        return heuristic(board, player_to_move, move_cache)
 
     stats["nodes_explored"] += 1
 
@@ -268,18 +268,17 @@ def _negamax(board, player_to_move, root_player, depth, alpha, beta, stats, dead
     if depth == 0 or (not valid_moves and not opp_valid_moves):
         if not valid_moves and not opp_valid_moves:
             game_winner = winner(board)
-            if game_winner == root_player:
+            if game_winner == player_to_move:
                 return float("inf")
-            if game_winner == -root_player:
+            if game_winner == -player_to_move:
                 return float("-inf")
             return 0.0
-        return heuristic(board, root_player, move_cache)
+        return heuristic(board, player_to_move, move_cache)
 
     if not valid_moves:
         return -_negamax(
             board,
             -player_to_move,
-            root_player,
             depth - 1,
             -beta,
             -alpha,
@@ -289,14 +288,13 @@ def _negamax(board, player_to_move, root_player, depth, alpha, beta, stats, dead
         )
 
     best_value = float("-inf")
-    ordered_moves = _order_moves(board, player_to_move, valid_moves, root_player, move_cache)
+    ordered_moves = _order_moves(board, player_to_move, valid_moves, move_cache)
 
     for move in ordered_moves:
         child = make_move(board, move[0], move[1], player_to_move)
         value = -_negamax(
             child,
             -player_to_move,
-            root_player,
             depth - 1,
             -beta,
             -alpha,
@@ -335,7 +333,7 @@ def _iterative_search(board, player_to_move, max_depth, deadline):
         current_best_move = best_move
         current_best_score = float("-inf")
 
-        ordered_moves = _order_moves(board, player_to_move, valid_moves, player_to_move, move_cache)
+        ordered_moves = _order_moves(board, player_to_move, valid_moves, move_cache)
         for move in ordered_moves:
             if time.perf_counter() >= deadline:
                 stats["timed_out"] = True
@@ -345,7 +343,6 @@ def _iterative_search(board, player_to_move, max_depth, deadline):
             value = -_negamax(
                 child,
                 -player_to_move,
-                player_to_move,
                 depth - 1,
                 float("-inf"),
                 float("inf"),
@@ -387,6 +384,25 @@ def _iterative_search(board, player_to_move, max_depth, deadline):
     }
 
 
+def _compute_time_budget(remain_time, difficulty):
+    requested = max(0.05, float(remain_time))
+
+    # Keep a small safety margin to avoid crossing per-move hard limit due overhead.
+    if requested <= 0.2:
+        margin = 0.02
+    elif requested <= 1.0:
+        margin = 0.05
+    elif requested <= 3.0:
+        margin = 0.10
+    else:
+        margin = 0.15
+
+    if difficulty >= 9:
+        margin *= 0.6
+
+    return max(0.05, requested - margin)
+
+
 def select_move(cur_state, player_to_move, remain_time, difficulty=5):
     valid_moves = get_valid_moves(cur_state, player_to_move)
     if not valid_moves:
@@ -418,9 +434,7 @@ def select_move(cur_state, player_to_move, remain_time, difficulty=5):
         # High difficulty performs exact endgame search when possible.
         max_depth = max(max_depth, empties + 1)
 
-    budget = max(0.05, min(float(remain_time), 2.8))
-    if difficulty >= 9:
-        budget = max(0.1, min(float(remain_time), 2.92))
+    budget = _compute_time_budget(remain_time, difficulty)
     deadline = time.perf_counter() + budget
 
     best_move, metrics = _iterative_search(cur_state, player_to_move, max_depth, deadline)
