@@ -27,11 +27,11 @@ DEFAULT_SEARCH_TIME = 3.5
 MIN_LEVEL = 1
 MAX_LEVEL = 10
 AUTO_SPEEDS = [
-    ("Very Slow", 1.25),
-    ("Slow", 0.75),
-    ("Normal", 0.35),
-    ("Fast", 0.15),
-    ("Very Fast", 0.05),
+    ("Very Slow", 5.0),
+    ("Slow", 3.5),
+    ("Normal", 2.0),
+    ("Fast", 1.0),
+    ("Very Fast", 0.5),
 ]
 INITIAL_STATE = [[0,0,0,0,0,0,0,0], 
                  [0,0,0,0,0,0,0,0],
@@ -45,17 +45,21 @@ WINDOW_WIDTH = 1000
 WINDOW_HEIGHT = 600
 
 
-def _build_search_agent(color, level, index):
+def _build_search_agent(color, level, index, think_time=DEFAULT_SEARCH_TIME):
     return SearchAgent(
         color=color,
         difficulty=level,
         name=f"SearchAgent{index}-L{level}",
-        remain_time=DEFAULT_SEARCH_TIME,
+        remain_time=think_time,
     )
 
 
 def _compute_agent_move(agent, game_state):
     return agent.get_move(game_state)
+
+
+def _nearest_speed_index(think_time):
+    return min(range(len(AUTO_SPEEDS)), key=lambda i: abs(AUTO_SPEEDS[i][1] - think_time))
 
 
 def _draw_button(surface, rect, label, font, hovered, enabled=True, active=False):
@@ -294,9 +298,8 @@ class Game:
         self.player2 = player2
         self.board = board
         self.play_mode = "auto"
-        self.speed_index = 2
+        self.speed_index = _nearest_speed_index(DEFAULT_SEARCH_TIME)
         self.pending_step = False
-        self.last_auto_tick = time.perf_counter() - AUTO_SPEEDS[self.speed_index][1]
         self.game_over = False
         self.winner = 0
         self.end_message = ""
@@ -321,6 +324,7 @@ class Game:
         self.speed_plus_button = pg.Rect(panel_x + 348, 414, 52, 44)
         self.new_match_button = pg.Rect(panel_x, 548, 190, 42)
         self.exit_button = pg.Rect(panel_x + 210, 548, 190, 42)
+        self._apply_current_think_time()
         
     def end_check(self):
         return self.board.game_state.is_game_over()
@@ -445,10 +449,17 @@ class Game:
     def _toggle_mode(self):
         self.play_mode = "step" if self.play_mode == "auto" else "auto"
         self.pending_step = False
-        self.last_auto_tick = time.perf_counter()
+
+    def _apply_current_think_time(self):
+        think_time = AUTO_SPEEDS[self.speed_index][1]
+        self.player1.agent.remain_time = think_time
+        self.player2.agent.remain_time = think_time
 
     def _change_speed(self, delta):
-        self.speed_index = max(0, min(len(AUTO_SPEEDS) - 1, self.speed_index + delta))
+        new_index = max(0, min(len(AUTO_SPEEDS) - 1, self.speed_index + delta))
+        if new_index != self.speed_index:
+            self.speed_index = new_index
+            self._apply_current_think_time()
 
     def _finalize_game(self, winner, message, output_log=None):
         self.game_over = True
@@ -483,9 +494,9 @@ class Game:
             active=self.play_mode == "step",
         )
 
-        speed_name, _ = AUTO_SPEEDS[self.speed_index]
-        speed_label = self.control_title_font.render("Speed", True, WHITE_COLOR)
-        speed_value = self.control_info_font.render(speed_name, True, WHITE_COLOR)
+        speed_name, think_time = AUTO_SPEEDS[self.speed_index]
+        speed_label = self.control_title_font.render("Think Time", True, WHITE_COLOR)
+        speed_value = self.control_info_font.render(f"{speed_name} ({think_time:.1f}s)", True, WHITE_COLOR)
         center_x = self.speed_minus_button.x + self.control_width // 2
         speed_label_rect = speed_label.get_rect(center=(center_x, 390))
         speed_value_rect = speed_value.get_rect(center=(center_x, 437))
@@ -535,7 +546,7 @@ class Game:
                 active=False,
             )
         else:
-            hint_text = "Space: next step | Tab: mode | +/-: speed"
+            hint_text = "Space: next step | Tab: mode | +/-: think time"
             hint = self.control_info_font.render(hint_text, True, WHITE_COLOR)
             self.screen.blit(hint, (BOARD_PIXEL_SIZE + 34, 476))
 
@@ -607,10 +618,7 @@ class Game:
                         self.pending_step = False
                         self._start_move_request()
                 else:
-                    _, step_delay = AUTO_SPEEDS[self.speed_index]
-                    now = time.perf_counter()
-                    if self.pending_future is None and now - self.last_auto_tick >= step_delay:
-                        self.last_auto_tick = now
+                    if self.pending_future is None:
                         self._start_move_request()
 
             self.board.draw_board(self.screen)
