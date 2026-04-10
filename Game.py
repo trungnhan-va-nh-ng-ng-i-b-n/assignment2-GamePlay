@@ -2,7 +2,7 @@ import pygame as pg
 import time
 from concurrent.futures import ThreadPoolExecutor
 from core import GameState
-from Agents import SearchAgent
+from Agents import SearchAgent, RandomAgent
 
 BG_COLOR = (45, 55, 65) 
 BLACK_COLOR = (0, 0, 0)
@@ -103,19 +103,15 @@ def setup_match_menu(screen):
     info_font = pg.font.Font(None, 24)
 
     level1 = 5
-    level2 = 5
     total_time = DEFAULT_TOTAL_TIME
 
-    row1_controls_y = 136
-    row2_controls_y = 252
-    row3_controls_y = 368
+    row1_controls_y = 150
+    row2_controls_y = 280
 
     a1_minus = pg.Rect(610, row1_controls_y, 52, 52)
     a1_plus = pg.Rect(820, row1_controls_y, 52, 52)
-    a2_minus = pg.Rect(610, row2_controls_y, 52, 52)
-    a2_plus = pg.Rect(820, row2_controls_y, 52, 52)
-    total_minus = pg.Rect(610, row3_controls_y, 52, 52)
-    total_plus = pg.Rect(820, row3_controls_y, 52, 52)
+    total_minus = pg.Rect(610, row2_controls_y, 52, 52)
+    total_plus = pg.Rect(820, row2_controls_y, 52, 52)
 
     start_button = pg.Rect(610, 430, 262, 46)
     quit_button = pg.Rect(610, 484, 262, 38)
@@ -130,15 +126,11 @@ def setup_match_menu(screen):
                 if event.key == pg.K_ESCAPE:
                     return None
                 if event.key == pg.K_RETURN:
-                    return level1, level2, total_time
+                    return level1, total_time
                 if event.key == pg.K_q:
                     level1 = max(MIN_LEVEL, level1 - 1)
                 if event.key == pg.K_w:
                     level1 = min(MAX_LEVEL, level1 + 1)
-                if event.key == pg.K_a:
-                    level2 = max(MIN_LEVEL, level2 - 1)
-                if event.key == pg.K_s:
-                    level2 = min(MAX_LEVEL, level2 + 1)
                 if event.key == pg.K_z:
                     total_time = max(MIN_TOTAL_TIME, total_time - TOTAL_TIME_STEP)
                 if event.key == pg.K_x:
@@ -149,16 +141,12 @@ def setup_match_menu(screen):
                     level1 = max(MIN_LEVEL, level1 - 1)
                 elif a1_plus.collidepoint(event.pos):
                     level1 = min(MAX_LEVEL, level1 + 1)
-                elif a2_minus.collidepoint(event.pos):
-                    level2 = max(MIN_LEVEL, level2 - 1)
-                elif a2_plus.collidepoint(event.pos):
-                    level2 = min(MAX_LEVEL, level2 + 1)
                 elif total_minus.collidepoint(event.pos):
                     total_time = max(MIN_TOTAL_TIME, total_time - TOTAL_TIME_STEP)
                 elif total_plus.collidepoint(event.pos):
                     total_time = min(MAX_TOTAL_TIME, total_time + TOTAL_TIME_STEP)
                 elif start_button.collidepoint(event.pos):
-                    return level1, level2, total_time
+                    return level1, total_time
                 elif quit_button.collidepoint(event.pos):
                     return None
 
@@ -170,34 +158,27 @@ def setup_match_menu(screen):
         screen.blit(title, (610, 36))
 
         a1_label = label_font.render("Agent 1 Level", True, WHITE_COLOR)
-        a2_label = label_font.render("Agent 2 Level", True, WHITE_COLOR)
         total_label = label_font.render("Total Time (s)", True, WHITE_COLOR)
-        screen.blit(a1_label, (610, 92))
-        screen.blit(a2_label, (610, 208))
-        screen.blit(total_label, (610, 324))
+        screen.blit(a1_label, (610, 106))
+        screen.blit(total_label, (610, 236))
 
         _draw_button(screen, a1_minus, "-", value_font, a1_minus.collidepoint(mouse_pos))
         _draw_button(screen, a1_plus, "+", value_font, a1_plus.collidepoint(mouse_pos))
-        _draw_button(screen, a2_minus, "-", value_font, a2_minus.collidepoint(mouse_pos))
-        _draw_button(screen, a2_plus, "+", value_font, a2_plus.collidepoint(mouse_pos))
         _draw_button(screen, total_minus, "-", value_font, total_minus.collidepoint(mouse_pos))
         _draw_button(screen, total_plus, "+", value_font, total_plus.collidepoint(mouse_pos))
 
         level1_text = value_font.render(str(level1), True, WHITE_COLOR)
-        level2_text = value_font.render(str(level2), True, WHITE_COLOR)
         total_text = value_font.render(str(total_time), True, WHITE_COLOR)
 
         level1_rect = level1_text.get_rect(center=(741, row1_controls_y + 26))
-        level2_rect = level2_text.get_rect(center=(741, row2_controls_y + 26))
-        total_rect = total_text.get_rect(center=(741, row3_controls_y + 26))
+        total_rect = total_text.get_rect(center=(741, row2_controls_y + 26))
         screen.blit(level1_text, level1_rect)
-        screen.blit(level2_text, level2_rect)
         screen.blit(total_text, total_rect)
 
         _draw_button(screen, start_button, "Start Match", label_font, start_button.collidepoint(mouse_pos))
         _draw_button(screen, quit_button, "Exit", label_font, quit_button.collidepoint(mouse_pos))
 
-        info = info_font.render("Q/W A1 | A/S A2 | Z/X total | Enter", True, WHITE_COLOR)
+        info = info_font.render("Q/W A1 | Z/X total | Enter", True, WHITE_COLOR)
         info_rect = info.get_rect(center=(BOARD_PIXEL_SIZE + (WINDOW_WIDTH - BOARD_PIXEL_SIZE) // 2, 566))
         screen.blit(info, info_rect)
 
@@ -215,10 +196,10 @@ def main():
         if selected_levels is None:
             break
 
-        level1, level2, total_time = selected_levels
+        level1, total_time = selected_levels
 
         agent1 = _build_search_agent(color=1, level=level1, index=1)
-        agent2 = _build_search_agent(color=-1, level=level2, index=2)
+        agent2 = RandomAgent(color=-1, name="RandomAgent")
 
         player1 = Player(agent1, 1, total_time=total_time)
         player2 = Player(agent2, -1, total_time=total_time)
