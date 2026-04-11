@@ -30,9 +30,11 @@ python3 Game.py
 ```
 
 When the GUI opens, a setup menu appears first:
-- Adjust Agent 1 level (1-10) and Agent 2 level (1-10) with the `+`/`-` buttons.
-- Click `Start Match` to run SearchAgent vs SearchAgent using selected levels.
-- Keyboard shortcuts: `Q/W` for Agent 1, `A/S` for Agent 2, `Enter` to start.
+- Adjust Search level (1-10) with the `+`/`-` buttons.
+- Toggle Search side to choose whether SearchAgent is Player 1 (Black) or Player 2 (White).
+- Adjust `Total Time (s)` with the `+`/`-` buttons.
+- Click `Start Match` to run SearchAgent vs RandomAgent.
+- Keyboard shortcuts: `Q/W` for Search level, `A/S` to toggle Search side, `Z/X` for total time, `Enter` to start.
 
 During the match:
 - Toggle run mode with `Mode: AUTO` / `Mode: STEP` button (or `Tab`).
