@@ -89,7 +89,7 @@ def simulate_game(agent1, agent2):
 
 def run_batch(agent1_factory, agent2_factory, num_games=10):
     print(f"Running {num_games} matches...")
-    results = {"agent1_wins": 0, "agent2_wins": 0, "draws": 0}
+    results: dict = {"agent1_wins": 0, "agent2_wins": 0, "draws": 0}
     total_score_diff_agent1 = 0
     total_metrics = {
         "agent1": _new_bucket(),
