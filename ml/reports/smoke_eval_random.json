@@ -1,0 +1,37 @@
+{
+  "checkpoint": "ml/checkpoints/smoke/best_model.pt",
+  "num_games": 10,
+  "opponent": "RandomAgent",
+  "temperature": 0.0,
+  "results": {
+    "agent1_wins": 7,
+    "agent2_wins": 3,
+    "draws": 0,
+    "win_rate": 0.7,
+    "draw_rate": 0.0,
+    "loss_rate": 0.3,
+    "avg_score_diff": 15.0
+  },
+  "metrics": {
+    "agent1": {
+      "moves": 301,
+      "avg_move_time": 0.0013944601329160793,
+      "avg_game_time": 0.04197325000077399,
+      "max_move_time": 0.006666600000244216,
+      "avg_nodes": 1.0,
+      "avg_pruned": 0.0,
+      "avg_depth": 0.0,
+      "invalid_moves": 0
+    },
+    "agent2": {
+      "moves": 302,
+      "avg_move_time": 5.9516887375632946e-05,
+      "avg_game_time": 0.001797409998744115,
+      "max_move_time": 0.00014409999948838959,
+      "avg_nodes": 1.0,
+      "avg_pruned": 0.0,
+      "avg_depth": 0.0,
+      "invalid_moves": 0
+    }
+  }
+}
