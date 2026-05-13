@@ -71,7 +71,14 @@ def _apply_move(board_list: list, move: tuple, player: int) -> list:
 # ── Negamax với ML value head ───────────────────────────────────────────
 _negamax_cache: dict = {}
 
-def _negamax_ml(board_list, player, depth, alpha, beta, model, device):
+def _negamax_ml(board_list, player, depth, alpha, beta, model, device, deadline=None):
+    # Time check — abort if deadline exceeded
+    if deadline is not None and time.perf_counter() >= deadline:
+        s = torch.from_numpy(_board_to_tensor(board_list, player)).unsqueeze(0).to(device)
+        with torch.no_grad():
+            _, v = model(s)
+        return v.item(), None
+
     from core import GameState
     gs = GameState(board_list, player)
     legal = gs.get_legal_moves(player)
@@ -88,7 +95,7 @@ def _negamax_ml(board_list, player, depth, alpha, beta, model, device):
         return _negamax_cache[key], None
 
     if not legal:
-        v, _ = _negamax_ml(board_list, -player, depth-1, -beta, -alpha, model, device)
+        v, _ = _negamax_ml(board_list, -player, depth-1, -beta, -alpha, model, device, deadline)
         return -v, None
 
     # ── Policy-guided move ordering (tốt nhất trước → alpha-beta prune tốt hơn ~10x)
@@ -102,14 +109,89 @@ def _negamax_ml(board_list, player, depth, alpha, beta, model, device):
     best_v, best_m = -1e9, legal[0]
     for move in legal:
         nb = _apply_move(board_list, move, player)
-        v, _ = _negamax_ml(nb, -player, depth-1, -beta, -alpha, model, device)
+        v, _ = _negamax_ml(nb, -player, depth-1, -beta, -alpha, model, device, deadline)
         v = -v
         if v > best_v:
             best_v, best_m = v, move
         alpha = max(alpha, v)
         if alpha >= beta:
             break
+        if deadline is not None and time.perf_counter() >= deadline:
+            break
     return best_v, best_m
+
+
+# ── Neural MCTS (PUCT — AlphaGo Zero style) ─────────────────────────────────
+class _MCTSNode:
+    __slots__ = ["board","player","move","parent","children","visits","value_sum","prior","is_expanded"]
+    def __init__(self, board, player, move=None, parent=None, prior=0.0):
+        self.board=board; self.player=player; self.move=move
+        self.parent=parent; self.children=[]; self.visits=0
+        self.value_sum=0.0; self.prior=prior; self.is_expanded=False
+
+    @property
+    def q_value(self): return self.value_sum/self.visits if self.visits>0 else 0.0
+
+    def puct_score(self, c=1.5):
+        # Q từ PARENT's perspective = -q_value (zero-sum game)
+        # value_sum được tích lũy từ self.player's perspective
+        # → parent muốn maximize: -q_value (opponent's loss = our gain)
+        p_visits = self.parent.visits if self.parent else 1
+        q = -(self.value_sum / self.visits) if self.visits > 0 else 0.0
+        return q + c*self.prior*(p_visits**0.5)/(1+self.visits)
+
+
+def _mcts_expand(node, model, device):
+    from core import GameState
+    gs = GameState(node.board, node.player)
+    legal = gs.get_legal_moves(node.player)
+    s = torch.from_numpy(_board_to_tensor(node.board, node.player)).unsqueeze(0).to(device)
+    with torch.no_grad():
+        policy, value = model(s)
+        probs = F.softmax(policy.squeeze(0), dim=0).cpu().numpy()
+        v = value.item()
+    if not legal:
+        opp = gs.get_legal_moves(-node.player)
+        if opp:
+            node.children.append(_MCTSNode(node.board, -node.player, None, node, 1.0))
+    else:
+        for move in legal:
+            prior = float(probs[move[0]*8+move[1]])
+            cb = _apply_move(node.board, move, node.player)
+            node.children.append(_MCTSNode(cb, -node.player, move, node, prior))
+    node.is_expanded = True
+    return v
+
+
+def _mcts_backprop(node, value):
+    while node:
+        node.visits+=1; node.value_sum+=value; value=-value; node=node.parent
+
+
+def run_mcts(board, player, model, device, time_budget=3.0):
+    root = _MCTSNode(board, player)
+    deadline = time.perf_counter() + time_budget - 0.05
+    _mcts_expand(root, model, device)
+    if not root.children: return None, 0
+    sims = 0
+    while time.perf_counter() < deadline:
+        # Select
+        node = root
+        while node.is_expanded and node.children:
+            node = max(node.children, key=lambda n: n.puct_score())
+        # Expand + Evaluate
+        if not node.is_expanded:
+            v = _mcts_expand(node, model, device)
+        else:
+            s = torch.from_numpy(_board_to_tensor(node.board, node.player)).unsqueeze(0).to(device)
+            with torch.no_grad():
+                _, val = model(s)
+            v = val.item()
+        # Backprop
+        _mcts_backprop(node, v)
+        sims += 1
+    best = max(root.children, key=lambda n: n.visits)
+    return best.move, sims
 
 
 # ── Batch Negamax (GPU-friendly) ────────────────────────────────────────────────────
@@ -211,11 +293,8 @@ class MLPAgent(BaseAgent):
       "negamax" — Negamax depth-N + value head (mạnh nhất, chậm hơn)
     """
 
-    # Sequential negamax + alpha-beta + policy ordering
-    # depth 8 ~10s/move (max practical), depth 9+ too slow
-    DEPTH_MAP = {1:1, 2:2, 3:3, 4:4, 5:5, 6:6, 7:7, 8:8, 9:8, 10:8}
-    # Batch negamax: can go deeper (GPU batch call at leaves)
-    BATCH_DEPTH_MAP = {1:1, 2:2, 3:3, 4:4, 5:5, 6:6, 7:7, 8:8, 9:8, 10:8}
+    # Max practical search depth (odd depths win more due to negamax horizon)
+    MAX_DEPTH = 9
 
     def __init__(
         self,
@@ -231,10 +310,12 @@ class MLPAgent(BaseAgent):
         super().__init__(color=color, name=name)
 
         self.mode = mode
-        if mode == "batch_negamax":
-            self.depth = self.BATCH_DEPTH_MAP.get(search_level, 4)
-        else:
-            self.depth = self.DEPTH_MAP.get(search_level, 3)
+
+        # Map search_level (1-10) → actual depth, always ODD
+        # Odd depth avoids negamax odd-even oscillation:
+        #   depth=1→1, 2→3, 3→3, 4→5, 5→5, 6→7, 7→7, 8→7, 9→9, 10→9
+        raw = max(1, min(search_level, self.MAX_DEPTH))
+        self.depth = raw if raw % 2 == 1 else raw - 1
 
         # Device
         if device == "auto":
@@ -253,13 +334,23 @@ class MLPAgent(BaseAgent):
         self.model.load_state_dict(ckpt["model_state_dict"])
         self.model.eval().to(self.device)
 
+        # Compile model with TorchScript for 2-5x faster inference
+        try:
+            dummy = torch.zeros(1, 4, 8, 8).to(self.device)
+            self.model = torch.jit.trace(self.model, dummy)
+            self.model.eval()
+        except Exception:
+            pass  # fallback to normal model if trace fails
+
         val_acc = ckpt.get("best_val_acc", "?")
         epoch   = ckpt.get("epoch", "?")
         print(f"[MLPAgent] Loaded {checkpoint_path}  "
               f"mode={mode}  depth={self.depth}  val_acc={val_acc:.4f}  epoch={epoch}")
 
-    def get_move(self, game_state):
+    def get_move(self, game_state, remain_time: float = 3.0):
+        """remain_time: total time budget (seconds) for this move, same as HC SearchAgent."""
         start = time.perf_counter()
+        deadline = start + max(0.1, remain_time - 0.05)  # 0.05s safety margin
 
         legal = game_state.get_legal_moves(self.color)
         if not legal:
@@ -273,17 +364,32 @@ class MLPAgent(BaseAgent):
         elif self.mode == "1ply":
             move, score = self._oneply_move(board, legal)
 
-        else:  # negamax or batch_negamax
-            if self.mode == "batch_negamax":
-                score, move = _batch_negamax(
-                    board, self.color, self.depth, self.model, self.device
-                )
-            else:
-                global _negamax_cache
-                _negamax_cache = {}
+        elif self.mode == "mcts":
+            move, sims = run_mcts(board, self.color, self.model, self.device,
+                                  time_budget=remain_time)
+            if move is None: move = legal[0]
+            score = sims  # report sim count as score
+
+        else:  # negamax — iterative deepening with time budget
+            global _negamax_cache
+            _negamax_cache = {}
+
+            best_move, best_score = legal[0], -1e9
+
+            # Iterative deepening: odd depths only (1→3→5→7→9)
+            for depth in range(1, self.MAX_DEPTH + 1, 2):
+                if time.perf_counter() >= deadline:
+                    break  # no time for next depth
+
                 score, move = _negamax_ml(
-                    board, self.color, self.depth, -1e9, 1e9, self.model, self.device
+                    board, self.color, depth, -1e9, 1e9,
+                    self.model, self.device, deadline
                 )
+                if move is not None and time.perf_counter() < deadline:
+                    # Only accept result if search completed before deadline
+                    best_move, best_score = move, score
+
+            move, score = best_move, best_score
             if move is None:
                 move = legal[0]
 

@@ -41,8 +41,9 @@ def load_npz_files(path):
     for f in files:
         d = np.load(f)
         states_list.append(d["states"])
-        masks_list.append(d["legal_masks"])
-        targets_list.append(d["policy_targets"])
+        # Support both key naming conventions
+        masks_list.append(d["legal_masks"] if "legal_masks" in d else d["masks"])
+        targets_list.append(d["policy_targets"] if "policy_targets" in d else d["targets"])
         outcomes_list.append(d["outcomes"])
         print(f"  {os.path.basename(f)}: {d['states'].shape[0]:,} samples, shape={d['states'].shape[1:]}")
 
