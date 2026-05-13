@@ -57,10 +57,10 @@ def _play_one_game(args):
     gs = GameState(board, 1)
 
     while True:
-        current = gs.current_player
+        current = gs.current_turn
         legal = gs.get_legal_moves(current)
         if not legal:
-            gs.current_player = -current
+            gs.current_turn = -current
             if not gs.get_legal_moves(-current):
                 break
             continue
@@ -72,7 +72,7 @@ def _play_one_game(args):
 
         if move:
             gs.apply_move(move, current)
-        gs.current_player = -current
+        gs.current_turn = -current
 
     b = np.array(gs.board)
     black, white = int((b == 1).sum()), int((b == -1).sum())
