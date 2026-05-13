@@ -46,7 +46,7 @@ def _play_one_game(args):
         ml_color, opp_color = -1, 1
 
     ml = MLPAgent(color=ml_color, checkpoint_path=model_path,
-                  mode='negamax', search_level=ml_level, time_limit=ml_time)
+                  mode='negamax', search_level=ml_level)
 
     if hc_level == 0:
         opp = RandomAgent(color=opp_color)
