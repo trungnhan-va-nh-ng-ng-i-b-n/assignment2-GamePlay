@@ -1,291 +1,187 @@
-# ML Othello Agent — Technical Overview
+# ML Agent — OthelloMLP + Negamax
 
-## 1. Game: Othello (Reversi)
+## Overview
 
-Othello is a two-player zero-sum board game played on an **8×8 grid**.
+This ML agent replaces the **hand-crafted heuristic** inside a standard Negamax search with a **neural network (OthelloMLP)** trained via imitation learning on Level-10 Minimax expert data.
 
-**Rules:**
-- Players alternate placing discs (Black / White)
-- A move is valid if it **flanks** ≥1 opponent discs in any direction (horizontal, vertical, diagonal)
-- All flanked discs are **flipped** to the current player's color
-- Game ends when neither player has a legal move; the player with **more discs wins**
+The search *framework* is identical to the HC `SearchAgent` (Negamax + alpha-beta pruning). The two key innovations are:
 
-**Why it's challenging:**
-- State space: ~10^28 legal positions
-- Long-horizon strategy: early positional play determines late-game outcomes
-- Mobility and corner control are critical — a single corner capture can shift the entire game
+1. **Neural Leaf Evaluation** — `value_head(board)` replaces the hand-crafted heuristic at leaf nodes  
+2. **Policy-Guided Move Ordering** — `policy_head(board)` sorts moves best-first at interior nodes, producing more alpha-beta cutoffs and effectively reaching deeper equivalent depth
 
 ---
 
-## 2. Dataset Generation
-
-### 2.1 Teacher Agent
-Expert data is generated using the project's **SearchAgent** (Minimax + Alpha-Beta Pruning) as a teacher:
-
-| Dataset | Teacher Level | Think Time | Purpose |
-|---------|--------------|------------|---------|
-| `data_best_*.npz` | L7 | **3.0s / game** | High-quality labels |
-| `data_fast_*.npz` | L6–L7 | **0.2s / game** | Large-scale coverage |
-
-### 2.2 Parallel Generation (48-Core Server)
-Games were generated in parallel on a **48-core server** using Python `multiprocessing`:
+## Architecture — OthelloMLP
 
 ```
-generate_parallel.py
-  └── Pool(48 workers)
-        ├── Worker 1: generates games [seed=1, ...]
-        ├── Worker 2: generates games [seed=2, ...]
-        ├── ...
-        └── Worker 48: generates games [seed=48, ...]
+Input: (B, 4, 8, 8) board tensor
+  Channel 0: own discs    — 1.0 where current player has a disc
+  Channel 1: opp discs    — 1.0 where opponent has a disc
+  Channel 2: empty cells  — 1.0 where cell is empty
+  Channel 3: turn plane   — 1.0 if Black (player=1), 0.0 if White (player=-1)
+
+Backbone: 6-layer MLP with BatchNorm + ReLU + Dropout(0.1)
+  Linear(256) → Linear(1024) → Linear(512) → Linear(512) → Linear(256) → Linear(256) → Linear(128)
+
+Heads:
+  policy_head: Linear(128 → 64)  — unnormalised logits over all 64 squares
+  value_head:  Linear(128 → 64) → ReLU → Linear(64 → 1) → Tanh
+               output ∈ [-1, +1], +1 = current player wins
 ```
 
-Each worker runs independently and saves its own `.npz` batch — no synchronization overhead.
-
-### 2.3 Dataset Statistics
-
-| Metric | Value |
-|--------|-------|
-| Total `.npz` files | **38 files** (20 best + 18 fast) |
-| Total games played | **24,948 games** |
-| Total board positions | **~1.49M samples** |
-| Teacher levels | L6, L7 |
-| Think times | 0.2s, 3.0s |
-| Opening randomization | 4 random moves per game |
-
-### 2.4 Sample Attributes
-Each sample in the `.npz` files contains:
-
-| Attribute | Shape | Type | Description |
-|-----------|-------|------|-------------|
-| `states` | `(N, 4, 8, 8)` | float32 | Board encoding: **4 channels** per position |
-| `legal_masks` | `(N, 64)` | float32 | Binary mask of valid moves (1=legal) |
-| `policy_targets` | `(N,)` | int64 | Index (0–63) of the move chosen by teacher |
-| `outcomes` | `(N,)` | float32 | Game result from current player's view (+1=win, -1=loss) |
-| `players` | `(N,)` | int8 | Current player (+1=Black, -1=White) |
-
-### 2.5 Board Encoding (4-Channel)
-Each board state is encoded as a `(4, 8, 8)` tensor:
-
-```
-Channel 0 — own:        1.0 if current player's disc, else 0.0
-Channel 1 — opp:        1.0 if opponent's disc, else 0.0
-Channel 2 — empty:      1.0 if empty cell, else 0.0
-Channel 3 — turn_plane: 1.0 everywhere if Black to move, 0.0 if White to move
-```
-
-This encoding is **player-relative** and matches the server-side format exactly.
+**Parameters:** ~2.4M  
+**Input channels:** 4 (own, opp, empty, turn)  
 
 ---
 
-## 3. Algorithms
+## Search Algorithm
 
-### 3.1 Minimax & Negamax
-
-**Minimax** is the foundation of adversarial game search. It assumes both players play optimally:
-- **MAX player** (us) chooses the move with the **highest** score
-- **MIN player** (opponent) chooses the move with the **lowest** score
-
-**Negamax** is a cleaner implementation of Minimax exploiting the zero-sum property:
+### Negamax + Alpha-Beta + ML Evaluation
 
 ```
-negamax(board, player, depth):
+function negamax(board, player, depth, α, β):
     if depth == 0 or game_over:
-        return evaluate(board, player)   ← leaf node evaluation
+        return value_head(board, player)      ← ML replaces heuristic
+
+    moves = get_legal_moves(player)
+    if depth ≥ 2:
+        moves = sort_by_policy_prior(moves)   ← ML move ordering
 
     best = -∞
-    for each legal move:
-        apply move
-        score = -negamax(board, -player, depth - 1)  ← negate (zero-sum)
+    for move in moves:
+        next_board = apply(board, move)
+        score = -negamax(next_board, -player, depth-1, -β, -α)
         best = max(best, score)
-        undo move
+        α = max(α, score)
+        if α ≥ β: break                       ← alpha-beta cutoff
     return best
 ```
 
-In our ML agent, the `evaluate()` function is replaced by the **neural network value head** instead of a hand-crafted formula.
-
----
-
-### 3.2 Alpha-Beta Pruning
-
-Alpha-Beta Pruning cuts branches that cannot affect the final decision, reducing the search space from **O(b^d)** to **O(b^(d/2))** in the best case:
+### Iterative Deepening (Time-Based)
 
 ```
-negamax_ab(board, player, depth, α, β):
-    if depth == 0: return evaluate(board, player)
-
-    for each legal move:
-        score = -negamax_ab(board, -player, depth-1, -β, -α)
-        α = max(α, score)
-        if α ≥ β:
-            break          ← PRUNE: this branch can never be chosen
-    return α
+Reset transposition table
+for depth in [1, 3, 5, 7, 9]:         ← odd depths only
+    if time_elapsed ≥ deadline: break
+    (score, move) = negamax(board, depth, deadline)
+    if search completed before deadline:
+        best_move = move               ← accept completed result only
+return best_move
 ```
 
-| | Without pruning | With Alpha-Beta |
-|--|----------------|-----------------|
-| Nodes at depth 6 | ~10^6 | ~10^3 (best case) |
-| Branching factor | b | ~√b |
+**Why odd depths only?**  
+The `value_head` is trained on positions where it is the current player's turn to move. At odd search depths, the root player makes the last call to `value_head`, keeping the evaluation consistent with training. Even depths would have the opponent at the leaf, introducing a systematic bias.
 
-**Effectiveness depends heavily on move ordering** — better moves explored first → more cutoffs.
+### Move Ordering with Policy Head
 
----
+At each interior node with `depth ≥ 2`, the policy head generates prior probabilities over all 64 squares. Legal moves are sorted in descending order of prior probability before the alpha-beta loop. This puts the most likely good moves first, maximising the chance of an early beta-cutoff.
 
-### 3.3 Supervised Imitation Learning
+**Effect on pruning:**  
+With random ordering, alpha-beta prunes ~√(b^d) nodes of a b-ary tree of depth d.  
+With perfect ordering (best move always first), pruning reaches ~b^(d/2) nodes — effectively **doubling** the searchable depth. Policy-guided ordering approaches this ideal.
 
-The neural network is trained via **imitation learning** — learning to replicate the decisions of an expert teacher (SearchAgent L7):
+### Transposition Table
 
-```
-For each board position in dataset:
-    teacher_move  = move chosen by SearchAgent-L7 (policy target)
-    game_outcome  = +1 if teacher's color won, -1 if lost (value target)
-
-Loss = 0.7 × CrossEntropy(policy_head(board), teacher_move)
-     + 0.3 × MSE(value_head(board), game_outcome)
-```
-
-- **Policy loss** teaches *which move to make*
-- **Value loss** teaches *how good this position is*
-
-This is the same dual-head training approach used in **AlphaZero**, but with supervised (not self-play) data.
-
----
-
-### 3.4 Policy-Guided Move Ordering (Key Innovation)
-
-**Problem:** Neural net inference takes ~0.5ms/node vs ~0.001ms for hand-crafted heuristics. Without optimization, ML agent is capped at depth 4 (~5s/move).
-
-**Insight:** Alpha-Beta pruning is most effective when the **best moves are explored first**. The policy head naturally ranks moves by quality.
-
-**Solution:**
 ```python
-# At each non-leaf node, use policy head to sort moves before searching
-policy_logits = model.policy_head(board_tensor)       # one forward pass
-legal_moves   = sorted(legal_moves,
-                        key=lambda m: -policy_logits[m[0]*8 + m[1]])  # best-first
-
-# Now search in sorted order → far more alpha-beta cutoffs
-for move in legal_moves:
-    score = -negamax_ab(apply(board, move), depth-1, -β, -α)
-    ...
+_negamax_cache: dict  # (board_bytes, player) → float value
 ```
 
-**Result:**
+Leaf node evaluations are cached by `(board.tobytes(), player)`. Repeated positions (transpositions) in the tree reuse the cached value without another model forward pass.
 
-| Depth | Without ordering | With policy ordering | Speedup |
-|-------|-----------------|---------------------|---------|
-| 4 | ~5,000ms | ~70ms | **70×** |
-| 5 | ~50,000ms | ~290ms | **170×** |
-| 6 | timeout | ~830ms | **feasible!** |
-| 7 | timeout | ~2,600ms | **feasible!** |
-| 8 | timeout | ~10,000ms | **feasible!** |
+### TorchScript JIT Compilation
 
-This single optimization unlocks **depth 6–8** search, making the ML agent competitive at higher difficulty levels.
+After loading the checkpoint, the model is compiled with `torch.jit.trace`:
+
+```python
+self.model = torch.jit.trace(self.model, dummy_input)
+```
+
+This eliminates Python dispatch overhead during `model.forward()`, giving **2–3× faster per-call inference** on CPU — critical for tree search where thousands of model calls occur per move.
 
 ---
 
-## 4. ML Pipeline
+## Training
 
-### 4.1 Overview
+### Data Generation
 
-```
-[Expert Games] ──► [4-Channel Encoding] ──► [OthelloMLP Training]
-                                                      │
-                                                      ▼
-                               [Negamax Search + Alpha-Beta Pruning]
-                                      │                    │
-                              Policy head:           Value head:
-                           sort moves best-first    evaluate leaf nodes
-                                      │                    │
-                                      └────────┬───────────┘
-                                               ▼
-                                        [Move Decision]
+Expert self-play data is generated using the HC `SearchAgent` at Level 10 (depth 8, 3.0s/move) with 4 random opening moves for diversity:
+
+```bash
+python3 -u generate_parallel.py \
+  --games 9000 --level 10 --think 3.0 \
+  --workers 60 --opening 4 \
+  --output Dataset/l10/data_l10.npz
 ```
 
-### 4.2 Model Architecture — OthelloMLP
+Each game position is recorded as:
+- `state`: (4, 8, 8) board tensor  
+- `legal_mask`: (64,) binary mask of legal moves  
+- `policy_target`: index of the move actually played by Level-10 agent  
+- `outcome`: +1.0 (winner's positions), -1.0 (loser's), 0.0 (draw)
+
+### Loss Function
 
 ```
-Input: (4, 8, 8) → flatten → 256 features
-          │
-          ▼
-    Linear(256 → 1024) + BatchNorm + ReLU + Dropout(0.1)
-    Linear(1024 → 512) + BatchNorm + ReLU + Dropout(0.1)
-    Linear(512  → 512) + BatchNorm + ReLU + Dropout(0.1)
-    Linear(512  → 256) + BatchNorm + ReLU + Dropout(0.1)
-    Linear(256  → 256) + BatchNorm + ReLU + Dropout(0.1)
-          │
-    ┌─────┴──────┐
-    ▼            ▼
-Policy head   Value head
-→ 128 → 64   → 64 → 1 (Tanh)
-(move logits) (position score ∈ [-1, 1])
+L = L_policy + 0.5 × L_value
+
+L_policy = CrossEntropy(policy_logits[legal_moves], target_move)
+L_value  = MSE(value_head_output, game_outcome)
 ```
 
-**Total parameters:** ~3.2M
+### Training Config
 
-### 4.3 Training
-
-| Hyperparameter | Value |
-|----------------|-------|
-| Framework | PyTorch (Colab T4 GPU) |
+| Param | Value |
+|---|---|
+| Optimizer | AdamW (lr=3e-4, wd=1e-4) |
+| Batch size | 2048 |
 | Epochs | 100 |
-| Batch size | 512 |
-| Optimizer | Adam |
-| Learning rate | 3e-4 with 5-epoch warmup |
-| Loss | `0.7 × CrossEntropy(policy) + 0.3 × MSE(value)` |
-| Best val_acc | **73.7%** (saved at epoch 93) |
-
-### 4.4 Inference — Negamax + Policy Move Ordering
-
-**Standard ML+Minimax issue:** Neural net inference is ~500× slower than hand-crafted heuristics per node (0.5ms vs 0.001ms), making deep search infeasible.
-
-**Solution — Policy-Guided Move Ordering:**
-```python
-# Before searching children, sort moves using policy head
-policy_probs = model.policy_head(board)
-legal_moves  = sorted(legal_moves, key=lambda m: -policy_probs[m])  # best-first
-
-# Alpha-beta now prunes far more branches → ~100× fewer nodes evaluated
-```
-
-**Impact:**
-
-| Mode | Depth | Time/move | Nodes |
-|------|-------|-----------|-------|
-| Sequential (no ordering) | 4 | ~5s | ~50,000 |
-| **+ Policy ordering** | **6** | **~0.8s** | **~1,400** |
-| **+ Policy ordering** | **7** | **~2.6s** | **~4,700** |
-| **+ Policy ordering** | **8** | **~10s** | **~16,000** |
-
-### 4.5 Skill Levels
-
-10 difficulty levels controlled by search depth:
-
-| Level | Search Depth | Approx. time/move |
-|-------|-------------|-------------------|
-| L1 | 1 | ~0.01s |
-| L2 | 2 | ~0.03s |
-| L3 | 3 | ~0.1s |
-| L4 | 4 | ~0.07s |
-| L5 | 5 | ~0.3s |
-| L6 | 6 | ~0.8s |
-| L7 | 7 | ~2.6s |
-| L8 | 8 | ~10s |
+| LR schedule | Warmup (5 epochs) + Cosine decay |
+| Grad clip | 1.0 |
+| Dropout | 0.1 |
 
 ---
 
-## 5. Benchmark Results
+## Performance
 
-Fair benchmark: ML agent at depth D vs. SearchAgent at the same effective depth.
+| Opponent | Win Rate | Notes |
+|---|---|---|
+| Random | ~100% | Trivial |
+| HC-L1 (depth 1) | ~95% | |
+| HC-L2 (depth 2) | ~75% | |
+| HC-L3 (depth 3) | ~65% | (benchmark ongoing) |
+| HC-L5 (depth 3) | ~80% | Key target ✅ |
+| HC-L10 (depth 8) | ~0% | Node count bottleneck |
 
-| Matchup | ML depth | ML Win Rate | Result |
-|---------|----------|-------------|--------|
-| vs Random (Policy) | — | **90%** | ✅ |
-| vs Random (1-ply) | — | **100%** | ✅ |
-| vs HC-L1 | 1 | **80%** | ✅ |
-| vs HC-L2 | 2 | **70%** | ✅ |
-| vs HC-L3 | 3 | **90%** | ✅ 🔥 |
-| vs HC-L4 | 4 | **80%** | ✅ 🔥 |
-| vs HC-L5 | 5 | **70%** | ✅ |
-| vs HC-L6 | 6 | **60%** | ✅ |
+**Current model:** `best_mlp_model (6).pt`  — val_acc = **79.1%**, epoch 92, trained on ~540k L10 samples
 
-**8 / 8 matchups won.** The ML-augmented Negamax outperforms the hand-crafted heuristic at every tested level under fair computational conditions.
+---
+
+## Files
+
+```
+ml/
+├── mlp_agent.py      # MLPAgent class + negamax search + OthelloMLP definition
+├── encoding.py       # Board → tensor encoding (used during data generation)
+├── mlp_model.py      # Standalone OthelloMLP (for training scripts)
+└── README.md         # This file
+
+generate_parallel.py  # Parallel data generation (multiprocessing)
+train_local.py        # Training script (CPU or GPU)
+```
+
+---
+
+## Usage
+
+```python
+from ml.mlp_agent import MLPAgent
+
+agent = MLPAgent(
+    color=1,                            # 1 = Black, -1 = White
+    checkpoint_path="best_mlp_model.pt",
+    mode="negamax",                     # "policy" for fast mode
+    device="auto",                      # "cpu" or "cuda"
+)
+
+move, metrics = agent.get_move(game_state, remain_time=3.0)
+```
