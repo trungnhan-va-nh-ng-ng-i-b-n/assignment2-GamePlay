@@ -27,3 +27,19 @@ move.txt
 # Reference/Documentation
 reference/
 *.pdf
+
+# Large training data — do NOT push to git (too big)
+data/*.npz
+ml/data/*.npz
+
+# Model checkpoints — only keep best (7)
+models/best_mlp_model (5).pt
+models/best_mlp_model (6).pt
+# Catch any future extra checkpoints
+models/best_mlp_model\ (*).pt
+
+# Model checkpoints — too large for git
+models/*.pt
+*.pt
+
+data/othello_hf.npz
