@@ -55,14 +55,8 @@ def _run_games(args):
                     if move is None or move not in legal:
                         move = rng.choice(legal)
 
-                # Record this position
+                # Record this position — 4-channel encoding (own, opp, empty, turn_plane)
                 state_np = board_to_tensor(gs.board, turn)   # (4,8,8) from encoding.py
-                # Convert to our 3-channel format (own, opp, legal_mask)
-                board_arr = np.array(gs.board, dtype=np.int8)
-                own  = (board_arr == turn).astype(np.float32)
-                opp_ch = (board_arr == -turn).astype(np.float32)
-                lmask = legal_moves_mask(gs.board, turn).reshape(8, 8)
-                state_3ch = np.stack([own, opp_ch, lmask])   # (3,8,8)
 
                 mask_flat = legal_moves_mask(gs.board, turn)  # (64,)
                 move_idx  = move_to_index(move)
@@ -70,7 +64,7 @@ def _run_games(args):
                 # Only save if move is legal
                 if mask_flat[move_idx] > 0:
                     samples.append({
-                        "state"  : state_3ch,
+                        "state"  : state_np,    # (4,8,8) — 4 channels!
                         "mask"   : mask_flat,
                         "target" : move_idx,
                         "player" : turn,
