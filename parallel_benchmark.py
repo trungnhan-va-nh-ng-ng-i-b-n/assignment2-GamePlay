@@ -163,7 +163,114 @@ def main():
     print(f'  Total time: {total_elapsed:.0f}s ({total_elapsed/60:.1f} min)')
     print(f'{"="*60}\n')
 
+    _plot_results(results, args.model, args.games, args.time)
+
+
+def _plot_results(results, model_name, n_games, ml_time):
+    try:
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as mpatches
+        import numpy as np
+    except ImportError:
+        print('[chart] matplotlib not installed, skipping chart.')
+        return
+
+    labels   = list(results.keys())
+    wrs      = [r[3] for r in results.values()]
+    wins     = [r[0] for r in results.values()]
+    losses   = [r[1] for r in results.values()]
+    draws    = [r[2] for r in results.values()]
+    cis      = [1.96*(wr/100*(1-wr/100)/n_games)**0.5*100 for wr in wrs]
+    loss_pct = [l/n_games*100 for l in losses]
+    draw_pct = [d/n_games*100 for d in draws]
+
+    # ── Color theme ──────────────────────────────────────────────────────
+    BG    = '#0d1117'; PANEL = '#161b22'; GRID  = '#21262d'
+    TEXT  = '#e6edf3'; ACCENT= '#58a6ff'
+    WIN   = '#3fb950'; DRAW  = '#d29922'; LOSS  = '#f85149'
+
+    x = np.arange(len(labels)); W = 0.55
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6),
+                                    facecolor=BG,
+                                    gridspec_kw={'width_ratios': [1.8, 1]})
+    fig.suptitle(f'OthelloMLP + Negamax  ·  Benchmark  ({n_games} games each)',
+                 color=ACCENT, fontsize=16, fontweight='bold', y=1.01)
+
+    # ── Left: Stacked bar ────────────────────────────────────────────────
+    ax1.set_facecolor(PANEL)
+    for sp in ax1.spines.values(): sp.set_color(GRID)
+    ax1.tick_params(colors=TEXT)
+
+    ax1.bar(x, wrs,      W, color=WIN,  label='Win',  zorder=3)
+    ax1.bar(x, draw_pct, W, color=DRAW, label='Draw', bottom=wrs, zorder=3)
+    ax1.bar(x, loss_pct, W, color=LOSS, label='Loss',
+            bottom=[w+d for w,d in zip(wrs,draw_pct)], zorder=3)
+
+    # Win % label + CI error bar
+    ax1.errorbar(x, wrs, yerr=cis, fmt='none', color='white',
+                 capsize=5, capthick=1.5, elinewidth=1.5, zorder=5)
+    for xi, wr in zip(x, wrs):
+        if wr >= 10:
+            ax1.text(xi, wr/2, f'{wr:.0f}%', ha='center', va='center',
+                     color='#0d1117', fontsize=11, fontweight='bold')
+
+    ax1.set_xticks(x); ax1.set_xticklabels(labels, color=TEXT, fontsize=11)
+    ax1.set_ylim(0, 115); ax1.set_ylabel('Outcome (%)', color=TEXT, fontsize=11)
+    ax1.set_title('Win / Draw / Loss  (error bars = 95% CI)', color=TEXT, fontsize=12, pad=10)
+    ax1.yaxis.grid(True, color=GRID, linestyle='--', alpha=0.6, zorder=0)
+    ax1.set_axisbelow(True)
+    ax1.legend(handles=[mpatches.Patch(color=WIN, label='Win'),
+                         mpatches.Patch(color=DRAW, label='Draw'),
+                         mpatches.Patch(color=LOSS, label='Loss')],
+               facecolor=PANEL, edgecolor=GRID, labelcolor=TEXT,
+               fontsize=10, loc='lower left')
+
+    # ── Right: Win-rate trend + CI band ─────────────────────────────────
+    ax2.set_facecolor(PANEL)
+    for sp in ax2.spines.values(): sp.set_color(GRID)
+    ax2.tick_params(colors=TEXT)
+
+    ci_arr = np.array(cis)
+    wr_arr = np.array(wrs)
+    ax2.fill_between(x, wr_arr-ci_arr, wr_arr+ci_arr,
+                     color=ACCENT, alpha=0.15, zorder=2)
+    ax2.plot(x, wr_arr, color=ACCENT, linewidth=2.5, zorder=3)
+
+    dot_colors = [WIN if w>=60 else (DRAW if w>=40 else LOSS) for w in wrs]
+    for xi, wr, c, ci in zip(x, wrs, dot_colors, cis):
+        ax2.scatter(xi, wr, s=110, color=c, zorder=5,
+                    edgecolors='white', linewidth=1.5)
+        ax2.text(xi, wr+ci+4, f'{wr:.0f}%', ha='center',
+                 color=c, fontsize=10, fontweight='bold')
+
+    for ref, col, lbl in [(50,'#8b949e','50%'), (80,WIN,'80%'), (100,ACCENT,'100%')]:
+        ax2.axhline(ref, color=col, linewidth=1, linestyle='--', alpha=0.6)
+        ax2.text(len(labels)-0.6, ref+2, lbl, color=col, fontsize=9)
+
+    ax2.set_xticks(x); ax2.set_xticklabels(labels, color=TEXT, fontsize=10, rotation=10)
+    ax2.set_ylim(0, 118); ax2.set_ylabel('Win rate (%)', color=TEXT, fontsize=11)
+    ax2.set_title('Win Rate Trend  (shaded = 95% CI)', color=TEXT, fontsize=12, pad=10)
+    ax2.yaxis.grid(True, color=GRID, linestyle='--', alpha=0.5, zorder=0)
+    ax2.set_axisbelow(True)
+
+    fig.text(0.5, -0.04,
+        f'Model: {os.path.basename(model_name)}  |  '
+        f'Search: Negamax + alpha-beta + policy ordering  |  '
+        f'{ml_time}s/move  |  n={n_games} games/matchup',
+        ha='center', color='#8b949e', fontsize=9)
+
+    plt.tight_layout()
+    out = 'benchmark_parallel.png'
+    plt.savefig(out, dpi=160, bbox_inches='tight', facecolor=BG)
+    print(f'[chart] Saved → {out}')
+    try:
+        plt.show()
+    except Exception:
+        pass  # Headless server
+
 
 if __name__ == '__main__':
     mp.freeze_support()  # Required for Windows
     main()
+
