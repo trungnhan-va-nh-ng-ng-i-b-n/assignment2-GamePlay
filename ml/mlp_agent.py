@@ -378,25 +378,34 @@ class MLPAgent(BaseAgent):
             _negamax_cache = {}          # Reset transposition table each move
 
             best_move, best_score = legal[0], -1e9
+            depth_reached = 0
 
             # Iterative deepening: search depth 1→3→5→7→9
-            # Accept result only if the search fully completed before deadline.
+            # Only accept result if search fully completed before deadline.
             for depth in range(1, self.MAX_DEPTH + 1, 2):
                 if time.perf_counter() >= deadline:
                     break
 
+                t_before = time.perf_counter()
                 score, move = _negamax_ml(
                     board, self.color, depth, -1e9, 1e9,
                     self.model, self.device, deadline
                 )
-                if move is not None and time.perf_counter() < deadline:
+                t_after = time.perf_counter()
+
+                # Accept result only if:
+                # 1. move is not None (search found a move)
+                # 2. finished before deadline (search was not cut short)
+                if move is not None and t_after < deadline:
                     best_move, best_score = move, score
+                    depth_reached = depth
 
             move, score = best_move, best_score
             if move is None:
                 move = legal[0]
 
-        return move, self._metrics(start, len(legal), float(score))
+        return move, self._metrics(start, len(legal), float(score),
+                                   depth_reached if self.mode == 'negamax' else self.depth)
 
     # ── Internal helpers ─────────────────────────────────────────────────
 
@@ -415,12 +424,12 @@ class MLPAgent(BaseAgent):
         return move, v.item()
 
     @staticmethod
-    def _metrics(start, nodes, score):
+    def _metrics(start, nodes, score, depth_reached=0):
         return {
             "move_time"       : time.perf_counter() - start,
             "nodes_explored"  : nodes,
             "heuristic_score" : score,
-            "depth_reached"   : 0,
+            "depth_reached"   : depth_reached,
             "pruned_branches" : 0,
             "difficulty"      : "ml",
         }
