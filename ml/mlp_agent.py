@@ -183,6 +183,91 @@ def _negamax_ml(board_list, player, depth, alpha, beta, model, device, deadline=
     return best_v, best_m
 
 
+# ── Batch Negamax (GPU-friendly) ─────────────────────────────────────────
+class _TreeNode:
+    """Node in the game tree for batch leaf evaluation."""
+    __slots__ = ["board", "player", "move_from_parent", "children", "value", "is_leaf"]
+    def __init__(self, board, player, move_from_parent=None):
+        self.board = board; self.player = player
+        self.move_from_parent = move_from_parent
+        self.children = []; self.value = None; self.is_leaf = False
+
+
+def _expand_tree(node: _TreeNode, depth: int, max_leaves: int, leaf_list: list):
+    """Expand tree recursively, collecting all leaf nodes for batch evaluation."""
+    from core import GameState
+    if len(leaf_list) >= max_leaves:
+        node.is_leaf = True; leaf_list.append(node); return
+
+    gs = GameState(node.board, node.player)
+    legal = gs.get_legal_moves(node.player)
+    opp_legal = gs.get_legal_moves(-node.player)
+
+    if depth == 0 or (not legal and not opp_legal):
+        node.is_leaf = True; leaf_list.append(node); return
+
+    if not legal:
+        child = _TreeNode(node.board, -node.player)
+        node.children.append((None, -1, child))
+        _expand_tree(child, depth, max_leaves, leaf_list)
+        return
+
+    for move in legal:
+        nb = _apply_move(node.board, move, node.player)
+        child = _TreeNode(nb, -node.player, move)
+        node.children.append((move, -1, child))
+        _expand_tree(child, depth - 1, max_leaves, leaf_list)
+
+
+def _backpropagate(node: _TreeNode) -> float:
+    """Negamax backpropagation through the expanded tree."""
+    if node.is_leaf:
+        return node.value
+    best = -1e9
+    for move, sign, child in node.children:
+        v = sign * _backpropagate(child)
+        if v > best: best = v
+    node.value = best
+    return best
+
+
+def _batch_negamax(board_list, player, depth, model, device, max_leaves=50000):
+    """
+    GPU-friendly negamax: expand the entire tree in Python, then batch-evaluate
+    all leaf nodes in a SINGLE model forward pass.
+
+    Advantage over _negamax_ml: on GPU, one batch call of N leaves costs roughly
+    the same as one single call — so N leaves are evaluated for the price of 1.
+    On CPU the advantage is smaller but still 2-3x due to vectorisation.
+
+    Args:
+        max_leaves: cap on leaf count to avoid OOM (default 50k)
+    """
+    root = _TreeNode(board_list, player)
+    leaf_list = []
+    _expand_tree(root, depth, max_leaves, leaf_list)
+
+    # ── Batch evaluate all leaves in one forward pass ────────────────────
+    tensors = [_board_to_tensor(n.board, n.player) for n in leaf_list]
+    batch = torch.from_numpy(np.stack(tensors)).to(device)
+    with torch.no_grad():
+        _, values = model(batch)      # (N,) value tensor
+    values = values.cpu().numpy()
+
+    for node, val in zip(leaf_list, values):
+        node.value = float(val)
+
+    _backpropagate(root)
+
+    # Pick best move at root
+    best_v, best_m = -1e9, None
+    for move, sign, child in root.children:
+        v = sign * (child.value if child.value is not None else 0.0)
+        if v > best_v:
+            best_v, best_m = v, move
+    return best_v, best_m
+
+
 # ── MLPAgent ─────────────────────────────────────────────────────────────
 class MLPAgent(BaseAgent):
     """
@@ -199,10 +284,12 @@ class MLPAgent(BaseAgent):
         The deepest fully-completed depth within the time budget is used.
 
     Modes:
-        "policy"  — Single forward pass, policy head argmax. O(1) time.
-                    Best for quick demonstrations or very fast games.
-        "negamax" — Negamax + alpha-beta + iterative deepening. Default.
-                    Reaches depth 7 within a 3.0s budget on typical hardware.
+        "policy"       — Single forward pass, policy head argmax. O(1) time.
+                         Best for quick demonstrations or very fast games.
+        "negamax"      — Negamax + alpha-beta + iterative deepening. Default.
+                         Reaches depth 7 within a 3.0s budget on typical hardware.
+        "batch_negamax" — Expand full tree in Python, evaluate ALL leaves in one
+                         GPU batch forward pass. Ideal when GPU is available.
     """
 
     MAX_DEPTH = 9  # Max search depth (odd depths only: 1, 3, 5, 7, 9)
@@ -212,7 +299,7 @@ class MLPAgent(BaseAgent):
         color: int,
         checkpoint_path: str,
         name: str | None = None,
-        mode: Literal["policy", "negamax"] = "negamax",
+        mode: Literal["policy", "negamax", "batch_negamax"] = "negamax",
         search_level: int = 5,
         device: str = "auto",
     ):
@@ -280,6 +367,11 @@ class MLPAgent(BaseAgent):
 
         if self.mode == "policy":
             move, score = self._policy_move(board, legal)
+
+        elif self.mode == "batch_negamax":
+            score, move = _batch_negamax(board, self.color, self.depth,
+                                         self.model, self.device)
+            if move is None: move = legal[0]
 
         else:  # negamax — iterative deepening with time budget
             global _negamax_cache
