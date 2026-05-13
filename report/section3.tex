@@ -1,0 +1,31 @@
+\section{Proposed Approach}
+
+\subsection{Motivation: Combining Expert Data with Machine Learning}
+
+Hand-crafted heuristics, while effective, require significant domain expertise to design and are inherently limited by the designer's understanding of the game. They struggle to capture subtle long-term strategic patterns that emerge from high-level play. Machine learning offers an alternative: rather than specifying evaluation rules manually, we \textit{learn} an evaluation function directly from expert game data.
+
+Our approach is motivated by two key observations:
+
+\begin{enumerate}
+    \item \textbf{Minimax as a teacher}: A strong Minimax agent (Level 6–10) already plays at a competitive level. Its move decisions encode deep strategic knowledge that can serve as high-quality supervision signal.
+    \item \textbf{Neural value function}: A neural network trained to imitate the teacher's evaluations can generalize beyond the exact positions seen during training, potentially achieving strong play at inference time without exhaustive search.
+\end{enumerate}
+
+We combine both strengths: the neural network provides a fast, learned evaluation function, while Negamax search provides systematic lookahead to avoid greedy mistakes.
+
+\subsection{Overall Pipeline}
+
+Figure~\ref{fig:pipeline} illustrates the complete pipeline of our approach:
+
+\begin{enumerate}
+    \item \textbf{Data Generation}: A Minimax teacher (Level 6–10) plays games against itself and against random agents. Board states, move targets (policy), and game outcomes (value) are recorded.
+    \item \textbf{Model Training}: An MLP is trained on this dataset with a dual-head objective: a \textit{policy head} predicting the teacher's move distribution, and a \textit{value head} predicting the game outcome from the current player's perspective.
+    \item \textbf{Inference}: At game time, the trained MLP is combined with Negamax search. The value head evaluates leaf nodes; the policy head orders moves at interior nodes for better alpha-beta pruning.
+\end{enumerate}
+
+\begin{figure}[H]
+    \centering
+    % \includegraphics[width=0.9\linewidth]{pipeline.png}
+    \caption{Overall pipeline: Expert data generation $\rightarrow$ MLP training $\rightarrow$ Negamax-augmented inference.}
+    \label{fig:pipeline}
+\end{figure}
