@@ -66,7 +66,7 @@ def _play_one_game(args):
             continue
 
         if current == ml_color:
-            move, _ = ml.get_move(gs)
+            move, _ = ml.get_move(gs, remain_time=ml_time)
         else:
             move, _ = opp.get_move(gs)
 
@@ -137,9 +137,9 @@ def main():
 
     all_results = []
 
-    # 1. ML max vs Random
+    # 1. ML max (capped at depth=7 for speed) vs Random
     all_results.append(
-        run_matchup("ML-max vs Random", ml_level=10, hc_level=0,
+        run_matchup("ML-max vs Random", ml_level=7, hc_level=0,
                     n_games=args.games, workers=args.workers,
                     ml_time=args.time, model_path=args.model)
     )
