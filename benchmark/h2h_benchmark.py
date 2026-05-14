@@ -118,18 +118,19 @@ def main():
     parser.add_argument("--games",   type=int,   default=100)
     parser.add_argument("--workers", type=int,   default=8)
     parser.add_argument("--time",    type=float, default=3.0)
-    parser.add_argument("--levels",  type=int, nargs="+", default=list(range(1, 8)))
+    parser.add_argument("--depths",  type=int, nargs="+", default=[1, 3, 5, 7, 9])
     args = parser.parse_args()
 
     ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sys.path.insert(0, ROOT)
 
     print("=" * 65)
-    print("  Head-to-Head Benchmark — ML(L) vs HC(L)")
+    print("  Head-to-Head Benchmark — ML(depth=D) vs HC(depth=D)")
     print(f"  Model  : {args.model}")
     print(f"  Games  : {args.games} per matchup")
     print(f"  Workers: {args.workers}")
     print(f"  Time   : {args.time}s/move")
+    print(f"  Depths : {args.depths}  (odd only → no rounding)")
     print("=" * 65)
 
     all_results = []
@@ -141,11 +142,14 @@ def main():
                     ml_time=10.0, model_path=args.model)
     )
 
-    # 2. ML-LN vs HC-LN (same level)
-    for lvl in args.levels:
-        label = f"ML-L{lvl:02d} vs HC-L{lvl:02d}"
+    # 2. ML-D vs HC-D (same exact depth — odd only to avoid ML rounding)
+    for d in args.depths:
+        if d % 2 == 0:
+            print(f"  [SKIP] depth={d} is even — ML would round to {d-1}, skipping.")
+            continue
+        label = f"ML-D{d:02d} vs HC-D{d:02d}"
         all_results.append(
-            run_matchup(label, ml_level=lvl, hc_level=lvl,
+            run_matchup(label, ml_level=d, hc_level=d,
                         n_games=args.games, workers=args.workers,
                         ml_time=args.time, model_path=args.model)
         )
