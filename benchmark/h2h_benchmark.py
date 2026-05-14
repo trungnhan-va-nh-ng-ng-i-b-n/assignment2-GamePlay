@@ -2,14 +2,14 @@
 h2h_benchmark.py — Head-to-head: ML (level N) vs HC (level N).
 
 Matchups:
-  - ML max (search_level=10) vs Random
+  - ML max (search_level=7) vs Random
   - ML-L1  vs HC-L1
   - ML-L2  vs HC-L2
   ...
   - ML-L10 vs HC-L10
 
 Usage (run from project root):
-    py -u benchmark/h2h_benchmark.py --model "models/best_mlp_model (7).pt" --games 200 --workers 8
+    py -u benchmark/h2h_benchmark.py --model "models/best_mlp_model (8).pt" --games 100 --workers 60
 """
 import argparse, os, sys, time, random
 import multiprocessing as mp
@@ -56,6 +56,7 @@ def _play_one_game(args):
     board = [row[:] for row in INITIAL_BOARD]
     gs = GameState(board, 1)
 
+    # FIX: apply_move returns a NEW GameState — must capture it!
     while not gs.is_game_over():
         current = gs.current_turn
         legal = gs.get_legal_moves(current)
@@ -113,11 +114,11 @@ def run_matchup(label, ml_level, hc_level, n_games, workers, ml_time, model_path
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model",   default="models/best_mlp_model (7).pt")
-    parser.add_argument("--games",   type=int,   default=200)
+    parser.add_argument("--model",   default="models/best_mlp_model (8).pt")
+    parser.add_argument("--games",   type=int,   default=100)
     parser.add_argument("--workers", type=int,   default=8)
     parser.add_argument("--time",    type=float, default=3.0)
-    parser.add_argument("--levels",  type=int, nargs="+", default=list(range(1, 11)))
+    parser.add_argument("--levels",  type=int, nargs="+", default=list(range(1, 8)))
     args = parser.parse_args()
 
     ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -133,7 +134,7 @@ def main():
 
     all_results = []
 
-    # 1. ML max (capped at depth=7 for speed) vs Random
+    # 1. ML max (depth=7) vs Random
     all_results.append(
         run_matchup("ML-max vs Random", ml_level=7, hc_level=0,
                     n_games=args.games, workers=args.workers,
