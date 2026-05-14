@@ -134,11 +134,11 @@ def main():
 
     all_results = []
 
-    # 1. ML max (depth=7) vs Random
+    # 1. ML max (depth=9, 10s/move) vs Random — for 10/10 requirement
     all_results.append(
-        run_matchup("ML-max vs Random", ml_level=7, hc_level=0,
+        run_matchup("ML-max vs Random", ml_level=9, hc_level=0,
                     n_games=args.games, workers=args.workers,
-                    ml_time=args.time, model_path=args.model)
+                    ml_time=10.0, model_path=args.model)
     )
 
     # 2. ML-LN vs HC-LN (same level)
