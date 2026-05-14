@@ -309,10 +309,8 @@ class MLPAgent(BaseAgent):
 
         self.mode = mode
 
-        # Map search_level (1–10) → actual search depth, always ODD.
-        # Odd depths avoid negamax odd-even horizon oscillation.
-        raw = max(1, min(search_level, self.MAX_DEPTH))
-        self.depth = raw if raw % 2 == 1 else raw - 1
+        # Map search_level (1–10) → actual search depth (no rounding).
+        self.depth = max(1, min(search_level, self.MAX_DEPTH))
 
         # Device selection
         if device == "auto":
