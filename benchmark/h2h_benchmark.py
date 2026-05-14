@@ -56,13 +56,11 @@ def _play_one_game(args):
     board = [row[:] for row in INITIAL_BOARD]
     gs = GameState(board, 1)
 
-    while True:
+    while not gs.is_game_over():
         current = gs.current_turn
         legal = gs.get_legal_moves(current)
         if not legal:
             gs.current_turn = -current
-            if not gs.get_legal_moves(-current):
-                break
             continue
 
         if current == ml_color:
@@ -70,9 +68,7 @@ def _play_one_game(args):
         else:
             move, _ = opp.get_move(gs)
 
-        if move:
-            gs.apply_move(move, current)
-        gs.current_turn = -current
+        gs = gs.apply_move(move, current)
 
     b = np.array(gs.board)
     black, white = int((b == 1).sum()), int((b == -1).sum())
