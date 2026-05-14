@@ -93,7 +93,8 @@ import math
 EPOCHS       = 100   # 100 epochs ~40 phút trên T4, converge tốt với 2.4M data
 LR           = 3e-4  # stable hơn với batch 2048
 WARMUP       = 5     # warmup 5 epochs đầu
-LAMBDA_VALUE = 0.5
+LAMBDA_VALUE = 2.0   # was 0.5 — increased to improve value head accuracy for negamax
+
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
 
