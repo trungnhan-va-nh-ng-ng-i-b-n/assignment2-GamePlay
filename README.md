@@ -21,6 +21,8 @@ assignment2-GamePlay/
 ├── core.py                        # GameState, board logic
 ├── Agents.py                      # BaseAgent interface
 ├── Game.py                        # Game runner (UI + headless)
+├── Game_MLP.py                    # GUI for MLP vs Random/Search
+├── statistic.py                   # Headless batch simulation helpers
 │
 ├── agent_minimax/                 # Hand-crafted Minimax agent (HC baseline)
 │   └── Agents.py                  #   SearchAgent with alpha-beta + heuristic
@@ -31,33 +33,6 @@ assignment2-GamePlay/
 │   ├── dataset.py                 #   Dataset loader
 │   ├── encoding.py                #   4-channel board encoding
 │   └── evaluate.py                #   Evaluation helpers
-│
-├── train/                         # Training scripts
-│   ├── train_local.py             #   Train on local machine
-│   ├── train_only_v2.py           #   Lightweight training
-│   ├── train_mlp_colab.ipynb      #   Colab notebook (GPU recommended)
-│   └── train_only_v2.ipynb        #   Colab notebook v2
-│
-├── benchmark/                     # Benchmark scripts + results
-│   ├── parallel_benchmark.py      #   Main benchmark (parallel, fast)
-│   ├── fair_benchmark.py          #   Single-process benchmark (debug)
-│   ├── benchmark_chart.py         #   Chart generation
-│   └── *.png / *.json             #   Benchmark results
-│
-├── models/                        # Trained model checkpoints
-│   └── best_mlp_model (7).pt      #   Best model (~5MB, ~1.3M params)
-│
-├── data/                          # Training datasets (.npz)
-│   └── data_l10_merged_4ch.npz    #   Main dataset (~400K samples, 4-channel)
-│
-├── generate_parallel.py           # Generate expert training data
-│
-├── report/                        # LaTeX report
-│   ├── OUTLINE.md                 #   Report outline + section assignments
-│   ├── Background.tex
-│   ├── section3.tex
-│   ├── ModelArchitecture.tex
-│   └── Result_Analysis.tex
 │
 ├── requirements.txt               # Core dependencies
 └── requirements-ml.txt            # ML dependencies (torch, numpy...)
@@ -77,26 +52,14 @@ pip install -r requirements-ml.txt
 python Game.py
 ```
 
-### 3. Run benchmark (ML vs Minimax)
+### 3. Play MLP vs Random/Search (GUI)
 ```bash
-# Run from project root
-python benchmark/parallel_benchmark.py \
-    --model "models/best_mlp_model (7).pt" \
-    --games 100 --workers 8 --time 3.0
+python Game_MLP.py
 ```
 
-### 4. Generate training data
+### 4. Optional: Headless evaluation helper
 ```bash
-python generate_parallel.py --level 10 --games 500 --workers 8 --out data/data_new.npz
-```
-
-### 5. Train model
-```bash
-# Local
-python train/train_only_v2.py
-
-# Colab (recommended — GPU)
-# Open train/train_mlp_colab.ipynb in Google Colab
+python -m ml.evaluate --checkpoint ml/best_mlp_model.pt --opponent random --num-games 20
 ```
 
 ---
@@ -112,12 +75,6 @@ python train/train_only_v2.py
 | Checkpoint size | ~5 MB |
 | Search | Negamax + alpha-beta + iterative deepening |
 | Time budget | 3.0 s/move |
-
----
-
-## 📄 Report
-
-Report sources were removed from this repository during the Assignment 3 cleanup. Keep a local copy if needed.
 
 ---
 
