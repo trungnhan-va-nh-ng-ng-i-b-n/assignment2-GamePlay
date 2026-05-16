@@ -117,4 +117,27 @@ python train/train_only_v2.py
 
 ## 📄 Report
 
-See `report/OUTLINE.md` for the full outline and section assignments.
+Report sources were removed from this repository during the Assignment 3 cleanup. Keep a local copy if needed.
+
+---
+
+## Assignment 3 — MLP GUI (Hybrid ML + Search)
+
+### What we built
+- A standalone GUI to play MLPAgent against RandomAgent or SearchAgent.
+- The MLPAgent uses a trained MLP (policy + value heads) with Negamax + alpha-beta search.
+
+### How to run
+```bash
+python Game_MLP.py
+```
+
+### Requirements
+- Place the trained checkpoint at `ml/best_mlp_model.pt`.
+- The GUI lets you choose opponent type, search level, MLP side, and time budget.
+
+### Core files kept in the repo
+- Agents.py, core.py, algorithms/
+- Game.py, Game_MLP.py
+- ml/ (mlp_agent.py, mlp_model.py, encoding.py, dataset.py, evaluate.py)
+- requirements.txt, requirements-ml.txt
