@@ -55,7 +55,7 @@ python Game.py
 This assignment focuses on SearchAgent vs RandomAgent/SearchAgent using the hand-crafted minimax (no MLP).
 
 
-## Assignment 3 — MLP GUI (Hybrid ML + Search)
+## Assignment 3 — MLP (Hybrid ML + Search)
 
 ### What we built
 - A standalone GUI to play MLPAgent against RandomAgent or SearchAgent.
